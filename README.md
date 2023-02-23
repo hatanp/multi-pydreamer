@@ -1,3 +1,16 @@
+# Multi-PyDreamer
+This fork is an effort to better parallelize the training of model-based deep RL. 
+
+Current phase is targeting efficient wall-clock time training of Dreamer architecture on minerl in a cluster environment with lots of GPUs available. 
+
+Status:
+|                                       | PyDreamer | single GPU   | multi GPU | multi node |
+|---------------------------------------|-------------|-------------|-------------|-------------|
+| Generation on GPU                 | ❌           | ✅           | ❌           |  ❌           | 
+| Training on GPU                | ✅           | ✅           | ❌           |  ❌           | 
+I am currently targetting LUMI-supercomputer which might have some AMD specific tricks. 
+
+
 # PyDreamer
 
 Reimplementation of [DreamerV2](https://danijar.com/project/dreamerv2/) model-based RL algorithm in PyTorch. 
