@@ -94,7 +94,6 @@ def main(env_id='MiniGrid-MazeS11N-v0',
     while steps_saved < num_steps:
 
         # Switch policy prefill => main
-
         if is_prefill_policy and steps_saved >= num_steps_prefill:
             info(f'Switching to main policy: {policy_main}')
             policy = create_policy(policy_main, env, model_conf)
@@ -106,7 +105,7 @@ def main(env_id='MiniGrid-MazeS11N-v0',
             if time.time() - last_model_load > model_reload_interval:
                 while True:
                     # takes ~10sec to load checkpoint
-                    model_step = mlflow_load_checkpoint(policy.model, map_location='cpu')  # type: ignore
+                    model_step = mlflow_load_checkpoint(policy.model, map_location=policy.device)  # type: ignore
                     if model_step:
                         info(f'Generator loaded model checkpoint {model_step}')
                         last_model_load = time.time()
@@ -310,16 +309,20 @@ class RandomPolicy:
 
 class NetworkPolicy:
     def __init__(self, model: Dreamer, preprocess: Preprocessor):
-        self.model = model
+        self.device=torch.device("cuda:1")
+        self.model = model.to(self.device)
         self.preprocess = preprocess
         self.state = model.init_state(1)
 
     def __call__(self, obs) -> Tuple[np.ndarray, dict]:
         batch = self.preprocess.apply(obs, expandTB=True)
-        obs_model: Dict[str, Tensor] = map_structure(batch, torch.from_numpy)  # type: ignore
+        obs_model: Dict[str, Tensor] = map_structure(batch, lambda x: torch.from_numpy(x).to(self.device))  # type: ignore
+        #obs: Dict[str, Tensor] = map_structure(obs, lambda x: x.to("cuda:1"))  # type: ignore
 
         with torch.no_grad():
             action_distr, new_state, metrics = self.model.inference(obs_model, self.state)
+            metrics = map_structure(metrics, lambda x: x.to("cpu"))
+
             action = action_distr.sample()
             self.state = new_state
 
@@ -327,7 +330,8 @@ class NetworkPolicy:
         metrics.update(action_prob=action_distr.log_prob(action).exp().mean().item(),
                        policy_entropy=action_distr.entropy().mean().item())
 
-        action = action.squeeze()  # (1,1,A) => A
+
+        action = action.to("cpu").squeeze()  # (1,1,A) => A
         return action.numpy(), metrics
 
 
