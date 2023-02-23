@@ -8,6 +8,7 @@ Status:
 |---------------------------------------|-------------|-------------|-------------|-------------|
 | Generation on GPU                 | ❌           | ✅           | ❌           |  ❌           | 
 | Training on GPU                | ✅           | ✅           | ❌           |  ❌           | 
+
 I am currently targetting LUMI-supercomputer which might have some AMD specific tricks. 
 
 
