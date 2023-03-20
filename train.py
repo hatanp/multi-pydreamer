@@ -12,6 +12,8 @@ from torch import Tensor
 from torch.cuda.amp import GradScaler, autocast
 from torch.profiler import ProfilerActivity
 from torch.utils.data import DataLoader
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from pydreamer import tools
 from pydreamer.data import DataSequential, MlflowEpisodeRepository
@@ -21,15 +23,17 @@ from pydreamer.preprocessing import Preprocessor, WorkerInfoPreprocess
 from pydreamer.tools import *
 
 
-def run(conf):
+def run(conf, worker_id):
     
-    configure_logging(prefix='[TRAIN]')
+    configure_logging(prefix=f'[TRAIN {worker_id}]')
     mlrun = mlflow_init()
     artifact_uri = mlrun.info.artifact_uri
+    world_size = conf.learner_workers
+    dist.init_process_group(backend="nccl", rank=worker_id, world_size=world_size)
 
     torch.distributions.Distribution.set_default_validate_args(False)
     torch.backends.cudnn.benchmark = True  # type: ignore
-    device = torch.device(conf.device)
+    device = torch.device(f"cuda:{worker_id}")
     
     # Data directories
 
@@ -103,9 +107,10 @@ def run(conf):
 
     if conf.model == 'dreamer':
         model = Dreamer(conf)
+        model = DDP(model, device_ids=[worker_id])
     else:
         model: Dreamer = WorldModelProbe(conf)  # type: ignore
-    model.to(device)
+    #model.to(device)
     print(model)
     # print(repr(model))
     mlflow_log_text(repr(model), 'architecture.txt')

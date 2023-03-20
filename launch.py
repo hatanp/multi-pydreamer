@@ -104,10 +104,14 @@ def launch():
 
     # Launch learner
 
-    if belongs_to_worker('learner', 0):
-        info('Launching learner')
-        p = launch_learner(conf)
-        subprocesses.append(p)
+    for i in range(conf.learner_workers):
+        if belongs_to_worker('learner', i):
+            info(f'Launching learner {i}')
+            p = launch_learner(
+                conf,
+                worker_id=i
+            )
+            subprocesses.append(p)
 
     # Wait & watch
 
@@ -120,8 +124,8 @@ def launch():
             p.kill()  # Non-daemon processes (learner) need to be killed
 
 
-def launch_learner(conf):
-    p = Process(target=train.run, daemon=False, args=[conf])
+def launch_learner(conf, worker_id):
+    p = Process(target=train.run, daemon=False, args=[conf], kwargs=dict(worker_id=worker_id,))
     p.start()
     return p
 

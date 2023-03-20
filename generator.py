@@ -309,7 +309,7 @@ class RandomPolicy:
 
 class NetworkPolicy:
     def __init__(self, model: Dreamer, preprocess: Preprocessor):
-        self.device=torch.device("cuda:1")
+        self.device=torch.device("cuda:7")
         self.model = model.to(self.device)
         self.preprocess = preprocess
         self.state = model.init_state(1)

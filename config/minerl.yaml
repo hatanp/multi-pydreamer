@@ -1,8 +1,12 @@
 minerl:
   env_id: MineRLObtainDiamond-v0
-  env_time_limit: 3000
+  env_time_limit: 30000
   action_dim: 38
-  generator_workers: 2
+  generator_workers: 4
+
+  learner_workers: 6
+
+  eval_interval: 2000
   gamma: 0.995
   adam_lr: 1.0e-4
   reset_interval: 50
@@ -14,9 +18,30 @@ minerl:
   entropy: 0.010
   imag_horizon: 5
   # fast mode
-  batch_length: 16
-  batch_size: 16
-  log_interval: 300
+  batch_length: 64
+  batch_size: 64
+  log_interval: 100
   logbatch_interval: 2000
   save_interval: 1000
   eval_interval: 2000
+
+  generator_prefill_steps: 10_000
+
+  model: dreamer
+  deter_dim: 2048
+  stoch_dim: 32
+  stoch_discrete: 32
+  hidden_dim: 1000
+  gru_layers: 1
+  gru_type: gru
+  layer_norm: True
+  vecobs_size: 0
+  image_encoder: cnn
+  cnn_depth: 48
+  image_encoder_layers: 0
+  image_decoder: cnn
+  image_decoder_layers: 0
+  reward_input: False
+  reward_decoder_layers: 4
+  reward_decoder_categorical:
+  terminal_decoder_layers: 4
