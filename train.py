@@ -71,7 +71,7 @@ def run(conf):
             }, step=0)
             if data_train_stats.stats_steps < conf.generator_prefill_steps:
                 debug(f'Waiting for prefill: {data_train_stats.stats_steps}/{conf.generator_prefill_steps} steps...')
-                time.sleep(10)
+                time.sleep(60)
             else:
                 info(f'Done prefilling: {data_train_stats.stats_steps}/{conf.generator_prefill_steps} steps.')
                 break
@@ -87,7 +87,7 @@ def run(conf):
                           conf.batch_length,
                           conf.batch_size,
                           skip_first=True,
-                          reload_interval=120 if online_data else 0,
+                          reload_interval=1200 if online_data else 0,
                           buffer_size=conf.buffer_size if online_data else conf.buffer_size_offline,
                           reset_interval=conf.reset_interval,
                           allow_mid_reset=conf.allow_mid_reset)
@@ -141,6 +141,7 @@ def run(conf):
                                 pin_memory=True))
 
     scaler = GradScaler(enabled=conf.amp)
+    info(f'Started training loop')
 
     with get_profiler(conf) as profiler:
         while True:

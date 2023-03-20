@@ -114,7 +114,7 @@ class ConvDecoder(nn.Module):
                  in_dim,
                  out_channels=3,
                  cnn_depth=32,
-                 mlp_layers=0,
+                 mlp_layers=5,
                  layer_norm=True,
                  activation=nn.ELU
                  ):

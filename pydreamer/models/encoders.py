@@ -71,12 +71,25 @@ class MultiEncoder(nn.Module):
 
 class ConvEncoder(nn.Module):
 
-    def __init__(self, in_channels=3, cnn_depth=32, activation=nn.ELU):
+    def __init__(self, in_channels=3, cnn_depth=32,mlp_layers=5, hidden_dim=1024, activation=nn.ELU):
         super().__init__()
         self.out_dim = cnn_depth * 32
         kernels = (4, 4, 4, 4)
         stride = 2
         d = cnn_depth
+        """if mlp_layers > 0:#TODO: else
+            layer_norm=True
+            norm = nn.LayerNorm if layer_norm else NoNorm
+            layers = [
+            ]
+            for _ in range(mlp_layers - 1):
+                layers += [
+                    nn.Linear(hidden_dim, hidden_dim),
+                    norm(hidden_dim, eps=1e-3),
+                    activation()]
+            layers += [nn.Linear(hidden_dim, out_dim),
+                norm(hidden_dim, eps=1e-3),
+                activation()]"""
         self.model = nn.Sequential(
             nn.Conv2d(in_channels, d, kernels[0], stride),
             activation(),

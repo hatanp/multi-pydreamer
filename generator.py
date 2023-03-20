@@ -36,8 +36,8 @@ def main(env_id='MiniGrid-MazeS11N-v0',
          env_time_limit=0,
          env_action_repeat=1,
          limit_step_ratio=0.0,
-         steps_per_npz=1000,
-         model_reload_interval=120,
+         steps_per_npz=10000,
+         model_reload_interval=1200,
          model_conf=dict(),
          log_mlflow_metrics=True,
          split_fraction=0.0,
@@ -112,7 +112,7 @@ def main(env_id='MiniGrid-MazeS11N-v0',
                         break
                     else:
                         debug('Generator model checkpoint not found, waiting...')
-                        time.sleep(10)
+                        time.sleep(60)
 
             if limit_step_ratio and steps_saved >= model_step * limit_step_ratio:
                 # Rate limiting - keep looping until new model checkpoint is loaded

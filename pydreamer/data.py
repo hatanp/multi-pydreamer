@@ -229,7 +229,7 @@ class DataSequential(IterableDataset):
             with Timer(f'Reading {file}', verbose=False):
                 data = file.load_data()
         except Exception as e:
-            print('Error reading file - skipping')
+            print('Error reading file {file} - skipping')
             print(e)
             return
 

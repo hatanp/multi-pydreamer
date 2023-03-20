@@ -87,7 +87,7 @@ def mlflow_init(wait_for_resume=False):
         else:
             # Starting new run
             run = mlflow.start_run(run_name=run_name, tags={'resume_id': resume_id or ''})
-            info(f'Started mlflow run {run.info.run_id} ({resume_id}) in {uri}/{run.info.experiment_id}')
+            info(f'Started mlflow run {run.info.run_id} ({resume_id}) in {uri}/{run.info.experiment_id} with artifact store {mlflow.get_artifact_uri()}')
 
     os.environ['MLFLOW_RUN_ID'] = run.info.run_id  # for subprocesses
     return run
@@ -176,15 +176,16 @@ def mlflow_save_checkpoint(model, optimizers, steps):
 
 def mlflow_load_checkpoint(model, optimizers=tuple(), artifact_path='checkpoints/latest.pt', map_location=None):
     import mlflow
-    from mlflow.tracking.client import MlflowClient
+    from mlflow.artifacts import download_artifacts
     import torch
     with tempfile.TemporaryDirectory() as tmpdir:
-        client = MlflowClient()
         run_id = mlflow.active_run().info.run_id  # type: ignore
         try:
-            path = client.download_artifacts(run_id, artifact_path, tmpdir)
+            path = download_artifacts(run_id=run_id, artifact_path=artifact_path, dst_path=tmpdir)
         except Exception as e:  # TODO: check if it's an error instead of expected "not found"
             # Checkpoint not found
+            if "FileNotFoundError" not in e.message:
+                raise e
             return None
         try:
             checkpoint = torch.load(path, map_location=map_location)
@@ -319,6 +320,16 @@ class LogColorFormatter(logging.Formatter):
             fmt = self.fmt
         return logging.Formatter(fmt).format(record)
 
+#https://stackoverflow.com/a/36338212
+class LevelFilter(logging.Filter):
+    def __init__(self, low, high):
+        self._low = low
+        self._high = high
+        logging.Filter.__init__(self)
+    def filter(self, record):
+        if self._low <= record.levelno <= self._high:
+            return True
+        return False
 
 def configure_logging(prefix='[%(name)s]', level=logging.DEBUG, info_color=None):
     handler = logging.StreamHandler(sys.stdout)
@@ -327,6 +338,7 @@ def configure_logging(prefix='[%(name)s]', level=logging.DEBUG, info_color=None)
         f'{prefix}  %(message)s',
         info_color=info_color
     ))
+    handler.addFilter(LevelFilter(0, 30)) #Hide error spam
     logging.root.setLevel(level)
     logging.root.handlers = [handler]
     for logname in ['urllib3', 'requests', 'mlflow', 'git', 'azure', 'PIL', 'numba', 'google.auth']:
