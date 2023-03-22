@@ -4,10 +4,11 @@ import os
 import time
 from logging import info
 from distutils.util import strtobool
-from multiprocessing import Process
+from multiprocessing import Process, Queue, Manager
 from typing import List
 
 import generator
+import inference
 import train
 from pydreamer.tools import (configure_logging, mlflow_log_params,
                              mlflow_init, print_once, read_yamls)
@@ -48,10 +49,22 @@ def launch():
     artifact_uri = mlrun.info.artifact_uri
     mlflow_log_params(vars(conf))
 
+    subprocesses: List[Process] = []
+    # Launch policy inference thread
+    manager = Manager()
+    q_main = None
+    if conf.policy_inference == "remote":
+        q_main = manager.Queue()
+    q_clients = []
+
     # Launch train+eval generators
 
-    subprocesses: List[Process] = []
     for i in range(conf.generator_workers):
+        q_self = None
+        if conf.policy_inference == "remote":
+            q_self = manager.Queue()
+            q_clients.append(q_self)
+            info(f'generator {i} queue {q_self}')
         if belongs_to_worker('generator', i):
             info(f'Launching train+eval generator {i}')
             p = launch_generator(
@@ -62,16 +75,23 @@ def launch():
                 num_steps=conf.n_env_steps // conf.env_action_repeat // conf.generator_workers,
                 limit_step_ratio=conf.limit_step_ratio / conf.generator_workers,
                 worker_id=i,
-                policy_main='network',
+                policy_main='remote_network',
                 policy_prefill=conf.generator_prefill_policy,
                 num_steps_prefill=conf.generator_prefill_steps // conf.generator_workers,
                 split_fraction=0.05,
+                q_main=q_main,
+                q_self=q_self,
             )
             subprocesses.append(p)
 
     # Launch train generators
 
     for i in range(conf.generator_workers_train):
+        q_self = None
+        if conf.policy_inference == "remote":
+            q_self = manager.Queue()
+            q_clients.append(q_self)
+            info(f'generator {i} queue {q_self}')
         if belongs_to_worker('generator_train', i):
             info(f'Launching train generator {i}')
             p = launch_generator(
@@ -81,15 +101,22 @@ def launch():
                 num_steps=conf.n_env_steps // conf.env_action_repeat // conf.generator_workers,
                 limit_step_ratio=conf.limit_step_ratio / conf.generator_workers,
                 worker_id=i,
-                policy_main='network',
+                policy_main='remote_network',
                 policy_prefill=conf.generator_prefill_policy,
                 num_steps_prefill=conf.generator_prefill_steps // conf.generator_workers,
+                q_main=q_main,
+                q_self=q_self,
             )
             subprocesses.append(p)
 
     # Launch eval generators
 
     for i in range(conf.generator_workers_eval):
+        q_self = None
+        if conf.policy_inference == "remote":
+            q_self = manager.Queue()
+            q_clients.append(q_self)
+            info(f'generator {i} queue {q_self}')
         if belongs_to_worker('generator_eval', i):
             info(f'Launching eval generator {i}')
             p = launch_generator(
@@ -97,10 +124,26 @@ def launch():
                 conf,
                 f'{artifact_uri}/episodes_eval/{i}',
                 worker_id=conf.generator_workers + i,
-                policy_main='network',
-                metrics_prefix='agent_eval'
+                policy_main='remote_network',
+                metrics_prefix='agent_eval',
+                q_main=q_main,
+                q_self=q_self,
             )
             subprocesses.append(p)
+
+    # Launch inference process
+
+    if conf.policy_inference == "remote":
+        info(f'Launching remote inference {q_main}')
+        p = launch_inference(
+            conf.env_id,
+            conf,
+            worker_id=0,
+            policy_main='remote_network',
+            q_main=q_main,
+            q_clients=q_clients,
+        )
+        subprocesses.append(p)
 
     # Launch learner
 
@@ -129,6 +172,25 @@ def launch_learner(conf, worker_id):
     p.start()
     return p
 
+def launch_inference(env_id,
+                     conf,
+                     policy_main='remote_network',
+                     worker_id=0,
+                     q_main=None,
+                     q_clients=None,
+                     ):
+    p = Process(target=inference.main,
+                daemon=True,
+                kwargs=dict(
+                    env_id=env_id,
+                    policy_main=policy_main,
+                    worker_id=worker_id,
+                    model_conf=conf,
+                    q_main=q_main,
+                    q_clients=q_clients,
+                ))
+    p.start()
+    return p
 
 def launch_generator(env_id,
                      conf,
@@ -143,6 +205,8 @@ def launch_generator(env_id,
                      split_fraction=0.0,
                      metrics_prefix='agent',
                      log_mlflow_metrics=True,
+                     q_main=None,
+                     q_self=None,
                      ):
     p = Process(target=generator.main,
                 daemon=True,
@@ -164,6 +228,8 @@ def launch_generator(env_id,
                     split_fraction=split_fraction,
                     metrics_prefix=metrics_prefix,
                     metrics_gamma=conf.gamma,
+                    q_main=q_main,
+                    q_self=q_self,
                 ))
     p.start()
     return p

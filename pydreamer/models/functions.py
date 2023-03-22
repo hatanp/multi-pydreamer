@@ -134,6 +134,24 @@ def cat_structure_np(datas: List[Dict[str, np.ndarray]]) -> Dict[str, np.ndarray
         for k in keys
     }
 
+def cat_structure(data: List[Tuple[Tensor, ...]],dim=0) -> Tuple[Tensor, ...]:
+    assert isinstance(data[0], tuple), 'Not implemented for other types'
+    n = len(data[0])
+    return tuple(
+        torch.cat([d[i] for d in data],dim=dim)
+        for i in range(n)
+    )
+
+def cat_structure_torch(datas: List[Dict[str, torch.Tensor]],dim=0) -> Dict[str, torch.Tensor]:
+    assert isinstance(datas[0], dict), 'Not implemented for other types'
+    keys = set(datas[0].keys())
+    for d in datas[1:]:
+        keys.intersection_update(d.keys())
+    return {
+        k: torch.cat([d[k] for d in datas],dim=dim)
+        for k in keys
+    }
+
 
 def stack_structure_np(datas: Tuple[Dict[str, np.ndarray]]) -> Dict[str, np.ndarray]:
     assert isinstance(datas[0], dict), 'Not implemented for other types'

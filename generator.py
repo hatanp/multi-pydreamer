@@ -44,6 +44,8 @@ def main(env_id='MiniGrid-MazeS11N-v0',
          metrics_prefix='agent',
          metrics_gamma=0.99,
          log_every=10,
+         q_main=None,
+         q_self=None,
          ):
 
     configure_logging(prefix=f'[GEN {worker_id}]', info_color=LogColorFormatter.GREEN)
@@ -54,7 +56,10 @@ def main(env_id='MiniGrid-MazeS11N-v0',
          f', n_prefill={num_steps_prefill:,}'
          f', split_fraction={split_fraction}'
          f', metrics={metrics_prefix if log_mlflow_metrics else None}'
-         f', save_uri={save_uri}')
+         f', save_uri={save_uri}'
+         f', q_main={q_main}'
+         f', q_self={q_self}'
+         )
 
     if not save_uri:
         save_uri = f'{mlrun.info.artifact_uri}/episodes/{worker_id}'
@@ -75,11 +80,11 @@ def main(env_id='MiniGrid-MazeS11N-v0',
     if num_steps_prefill:
         # Start with prefill policy
         info(f'Prefill policy: {policy_prefill}')
-        policy = create_policy(policy_prefill, env, model_conf)
+        policy = create_policy(policy_prefill, env, model_conf,worker_id, q_main=q_main, q_self=q_self)
         is_prefill_policy = True
     else:
         info(f'Policy: {policy_main}')
-        policy = create_policy(policy_main, env, model_conf)
+        policy = create_policy(policy_main, env, model_conf,worker_id, q_main=q_main, q_self=q_self)
         is_prefill_policy = False
 
     # RUN
@@ -96,7 +101,7 @@ def main(env_id='MiniGrid-MazeS11N-v0',
         # Switch policy prefill => main
         if is_prefill_policy and steps_saved >= num_steps_prefill:
             info(f'Switching to main policy: {policy_main}')
-            policy = create_policy(policy_main, env, model_conf)
+            policy = create_policy(policy_main, env, model_conf,worker_id, q_main=q_main, q_self=q_self)
             is_prefill_policy = False
 
         # Load network
@@ -258,7 +263,18 @@ def main(env_id='MiniGrid-MazeS11N-v0',
     info('Generator done.')
 
 
-def create_policy(policy_type: str, env, model_conf):
+def create_policy(policy_type: str, env, model_conf, worker_id, q_main = None, q_self = None):
+    if policy_type == 'remote_network':
+        conf = model_conf
+        info(f'creating policy {q_main, q_self}')
+        model = RemoteDreamer(conf, q_main, q_self, worker_id)
+        preprocess = Preprocessor(image_categorical=conf.image_channels if conf.image_categorical else None,
+                                  image_key=conf.image_key,
+                                  map_categorical=conf.map_channels if conf.map_categorical else None,
+                                  map_key=conf.map_key,
+                                  action_dim=env.action_size,  # type: ignore
+                                  clip_rewards=conf.clip_rewards)
+        return RemotePolicy(model, preprocess)
     if policy_type == 'network':
         conf = model_conf
         if conf.model == 'dreamer':
@@ -306,10 +322,57 @@ class RandomPolicy:
     def __call__(self, obs) -> Tuple[int, dict]:
         return self.action_space.sample(), {}
 
+class RemoteDreamer:
+    def __init__(self, conf, q_main, q_self, my_id):
+        self.q_main = q_main
+        self.q_self = q_self
+        self.my_id = my_id
+        self.conf = conf
+        #model = Dreamer(conf)
+        #super().__init__(conf)
+    def init_state(self, batch_size: int):
+        """
+        This is only valid with default configuration so it assumes we are using RSSMCore and so on
+        Could be modified to ask from the policy inference process instead
+        """
+        return (
+            torch.zeros((batch_size, self.conf.deter_dim)),
+            torch.zeros((batch_size, self.conf.stoch_dim * (self.conf.stoch_discrete or 1))),
+        )
+    def inference(self, obs_model, state):
+        #info(f'putting to queue {self.q_main} {self.q_self}')
+        #self.q_main.put(40)
+        self.q_main.put((self.my_id, obs_model, state))
+        action_distr, out_state, metrics = self.q_self.get()
+        return action_distr, out_state, metrics
+
+
+class RemotePolicy:
+    def __init__(self, model: RemoteDreamer, preprocess: Preprocessor):
+        self.preprocess = preprocess
+        self.state = model.init_state(1)
+        self.model = model
+
+    def __call__(self, obs) -> Tuple[np.ndarray, dict]:
+        batch = self.preprocess.apply(obs, expandTB=True)
+        obs_model: Dict[str, Tensor] = map_structure(batch, torch.from_numpy)
+
+        logits, metrics, new_state = self.model.inference(obs_model, self.state)
+        action_distr = D.OneHotCategorical(logits=logits)
+        action = action_distr.sample()
+        self.state = new_state
+        #print("metrics",metrics)
+        metrics = {k: v.item() for k, v in metrics.items()}
+        metrics.update(action_prob=action_distr.log_prob(action).exp().mean().item(),
+                       policy_entropy=action_distr.entropy().mean().item())
+
+
+        action = action.squeeze()  # (1,1,A) => A
+        return action.numpy(), metrics
 
 class NetworkPolicy:
     def __init__(self, model: Dreamer, preprocess: Preprocessor):
-        self.device=torch.device("cuda:7")
+        self.device=torch.device("cuda:3")
         self.model = model.to(self.device)
         self.preprocess = preprocess
         self.state = model.init_state(1)
