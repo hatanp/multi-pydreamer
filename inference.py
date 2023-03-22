@@ -31,7 +31,7 @@ def main(env_id='MiniGrid-MazeS11N-v0',
          model_conf=dict(),
          q_main=None,
          q_clients=None,
-         inference_batch_size=8,
+         inference_batch_size=4,
          ):
 
     configure_logging(prefix=f'[INFER]', info_color=LogColorFormatter.GREEN)
@@ -45,14 +45,18 @@ def main(env_id='MiniGrid-MazeS11N-v0',
     info(f'Main policy: {policy_main}')
     policy = create_policy(policy_main, env.action_size, model_conf)
     is_prefill_policy = False
-
+    states = [policy.model.init_state(1) for i in range(model_conf.generator_workers)]
+    states = [map_structure(state, lambda x: x.to(policy.device)) for state in states]
+        
     while True:
         if time.time() - last_model_load > model_reload_interval:
             while True:
+                start_time = time.time()
+                #info(f'begin trying to load model checkpoint')
                 # takes ~10sec to load checkpoint
                 model_step = mlflow_load_checkpoint(policy.model, map_location=policy.device)  # type: ignore
                 if model_step:
-                    info(f'Inference loaded model checkpoint {model_step}')
+                    info(f'Inference loaded model checkpoint {model_step} t={time.time()-start_time}')
                     last_model_load = time.time()
                     break
                 else:
@@ -62,30 +66,27 @@ def main(env_id='MiniGrid-MazeS11N-v0',
         ids = []
         batch_obs = []
         batch_state = []
-
+        time_0 = time.time()
         for i in range(inference_batch_size):
             #info(f'Waiting for requests at {q_main}')
-            #test = q_main.get()
-            (my_id, obs_model, state) = q_main.get()
+            (my_id, obs_model) = q_main.get()
             #info(f'Got a request for queue {q_main}')
             ids.append(my_id)
             batch_obs.append(obs_model)
-            batch_state.append(state)
-        #print("shapes:", batch_obs[0].keys(),batch_obs[0]["image"].shape ,batch_state[0][0].shape)
+            batch_state.append(states[my_id])
+        
         batch_obs = cat_structure_torch(batch_obs,dim=1)#I think B is the second dim here, should be TBICHW
         batch_state = cat_structure(batch_state)
-        #print("shapes:", batch_obs.keys(),batch_obs["image"].shape ,batch_state[0].shape)
+
+        time_1 = time.time()
         logits, mets, new_state = policy(batch_obs,batch_state)
-        #print("shapes:", logits.shape,mets["policy_value"].shape ,new_state[0].shape,new_state[1].shape)
-        #print("action_distr.logits:", action_distr.logits.shape, action_distr.logits.device)
-        #print("action_distr.probs:", action_distr.probs.shape)
-        #print("action_distr.mean:", action_distr.mean.shape)
-        #print("action_distr.mode:", action_distr.mode.shape)
-        #print("action_distr.param_shape:", action_distr.param_shape)
-        #print("returning:", {'policy_value': mets["policy_value"][:,i:i+1]})
+        time_2 = time.time()
         for i in range(inference_batch_size):
             #info(f'responding to {q_clients[ids[i]]}')
-            q_clients[ids[i]].put((logits[:,i:i+1,:], {'policy_value': mets["policy_value"][:,i:i+1]}, tuple(x[i:i+1,:] for x in new_state)))
+            states[ids[i]] = tuple(x[i:i+1,:] for x in new_state)
+            q_clients[ids[i]].put((logits[:,i:i+1,:], {'policy_value': mets["policy_value"][:,i:i+1]}))
+        time_3 = time.time()
+        #print("times rec,inf,send:", time_1-time_0, time_2-time_1, time_3-time_2)
             
 
 def create_policy(policy_type: str, action_size, model_conf):
@@ -123,12 +124,12 @@ class NetworkPolicyHost:
         #obs_model: Dict[str, Tensor] = map_structure(batch, lambda x: torch.from_numpy(x).to(self.device))  # type: ignore
         #obs: Dict[str, Tensor] = map_structure(obs, lambda x: x.to("cuda:1"))  # type: ignore
         obs_model: Dict[str, Tensor] = map_structure(obs_model, lambda x: x.to(self.device))
-        state: Tuple[Tensor,...] = map_structure(state, lambda x: x.to(self.device))
+        #state: Tuple[Tensor,...] = map_structure(state, lambda x: x.to(self.device))
 
         with torch.no_grad():
             action_distr, new_state, metrics = self.model.inference(obs_model, state, metrics_mean=False)
             metrics = map_structure(metrics, lambda x: x.to("cpu"))
-            new_state = map_structure(new_state, lambda x: x.to("cpu"))
+            #new_state = map_structure(new_state, lambda x: x.to("cpu"))
         #info(f'returning 0 {action_distr}')
         #info(f'returning 1 {metrics}')
         #info(f'returning 2 {new_state}')

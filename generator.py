@@ -328,39 +328,25 @@ class RemoteDreamer:
         self.q_self = q_self
         self.my_id = my_id
         self.conf = conf
-        #model = Dreamer(conf)
-        #super().__init__(conf)
-    def init_state(self, batch_size: int):
-        """
-        This is only valid with default configuration so it assumes we are using RSSMCore and so on
-        Could be modified to ask from the policy inference process instead
-        """
-        return (
-            torch.zeros((batch_size, self.conf.deter_dim)),
-            torch.zeros((batch_size, self.conf.stoch_dim * (self.conf.stoch_discrete or 1))),
-        )
-    def inference(self, obs_model, state):
+    def inference(self, obs_model):
         #info(f'putting to queue {self.q_main} {self.q_self}')
-        #self.q_main.put(40)
-        self.q_main.put((self.my_id, obs_model, state))
-        action_distr, out_state, metrics = self.q_self.get()
-        return action_distr, out_state, metrics
+        self.q_main.put((self.my_id, obs_model))
+        action_distr, metrics = self.q_self.get()
+        return action_distr, metrics
 
 
 class RemotePolicy:
     def __init__(self, model: RemoteDreamer, preprocess: Preprocessor):
         self.preprocess = preprocess
-        self.state = model.init_state(1)
         self.model = model
 
     def __call__(self, obs) -> Tuple[np.ndarray, dict]:
         batch = self.preprocess.apply(obs, expandTB=True)
         obs_model: Dict[str, Tensor] = map_structure(batch, torch.from_numpy)
 
-        logits, metrics, new_state = self.model.inference(obs_model, self.state)
+        logits, metrics = self.model.inference(obs_model)
         action_distr = D.OneHotCategorical(logits=logits)
         action = action_distr.sample()
-        self.state = new_state
         #print("metrics",metrics)
         metrics = {k: v.item() for k, v in metrics.items()}
         metrics.update(action_prob=action_distr.log_prob(action).exp().mean().item(),

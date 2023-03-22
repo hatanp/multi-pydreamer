@@ -91,7 +91,7 @@ class Dreamer(nn.Module):
 
     def inference(self,
                   obs: Dict[str, Tensor],
-                  in_state: Any,
+                  in_state: Any, metrics_mean=True
                   ) -> Tuple[D.Distribution, Any, Dict]:
         assert 'action' in obs, 'Observation should contain previous action'
         act_shape = obs['action'].shape
@@ -107,7 +107,7 @@ class Dreamer(nn.Module):
         action_distr = self.ac.forward_actor(feature)  # (1,B,A)
         value = self.ac.forward_value(feature)  # (1,B)
 
-        metrics = dict(policy_value=value.detach().mean())
+        metrics = dict(policy_value=value.detach().mean()) if metrics_mean else dict(policy_value=value.detach())
         return action_distr, out_state, metrics
 
     def training_step(self,
