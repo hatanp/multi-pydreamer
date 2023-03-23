@@ -4,12 +4,14 @@ This fork is an effort to better parallelize the training of model-based deep RL
 Current phase is targeting efficient wall-clock time training of Dreamer architecture on minerl in a cluster environment with lots of GPUs available. 
 
 Status:
-|                                       | PyDreamer | single GPU   | multi GPU | multi node |
-|---------------------------------------|-------------|-------------|-------------|-------------|
-| Generation on GPU                 | ❌           | ✅           | ❌           |  ❌           | 
-| Training on GPU                | ✅           | ✅           | ❌           |  ❌           | 
+|                                        | single GPU   | multi GPU | multi node |
+|---------------------------------------|-------------|-------------|-------------|
+| Generation on GPU                 | ✅           | Not required           | minor changes            | 
+| Training on GPU                |  ✅           | ✅           |  minor changes           | 
+
 I am currently targetting LUMI-supercomputer which might have some AMD specific tricks. 
 
+I might have broken some functionality described below. I am currently only targetting Dreamer on MineRL.
 
 # PyDreamer
 
