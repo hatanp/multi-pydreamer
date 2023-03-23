@@ -176,15 +176,16 @@ def mlflow_save_checkpoint(model, optimizers, steps):
 
 def mlflow_load_checkpoint(model, optimizers=tuple(), artifact_path='checkpoints/latest.pt', map_location=None):
     import mlflow
-    from mlflow.tracking.client import MlflowClient
+    from mlflow.artifacts import download_artifacts
     import torch
     with tempfile.TemporaryDirectory() as tmpdir:
-        client = MlflowClient()
         run_id = mlflow.active_run().info.run_id  # type: ignore
         try:
-            path = client.download_artifacts(run_id, artifact_path, tmpdir)
-        except Exception as e:  # TODO: check if it's an error instead of expected "not found"
+            path = download_artifacts(run_id=run_id, artifact_path=artifact_path, dst_path=tmpdir)
+        except Exception as e:
             # Checkpoint not found
+            if "FileNotFoundError" not in e.message:
+                raise e
             return None
         try:
             checkpoint = torch.load(path, map_location=map_location)
