@@ -320,6 +320,36 @@ class LogColorFormatter(logging.Formatter):
             fmt = self.fmt
         return logging.Formatter(fmt).format(record)
 
+class MineRLFilter(logging.Filter):
+    """
+    Filter out various MineRL errors that we don't want to see in the log
+    """
+    def __init__(self):
+        logging.Filter.__init__(self)
+    def filter(self, record):
+        if "STATE ERROR - multiple states in the queue" in record.msg:
+            return False
+        if "Missing sound for event" in record.msg:
+            return False
+        if "ignored non-lowercase namespace: MalmoMod" in record.msg:
+            return False
+        if "FML appears to be missing any signature data" in record.msg:
+            return False
+        if "If this is a development environment you can ignore this" in record.msg:
+            return False
+        if "The binary patch set is missing" in record.msg:
+            return False
+        if "OverclockingPlugin does not have a MCVersion annotation" in record.msg:
+            return False
+        if "bad option: lastServer:" in record.msg:
+            return False
+        if "Sound Library Loader" in record.msg:
+            return False
+        if "OpenAL" in record.msg:
+            return False
+        if "loaded a new chunk" in record.msg:
+            return False
+        return True
 
 def configure_logging(prefix='[%(name)s]', level=logging.DEBUG, info_color=None):
     handler = logging.StreamHandler(sys.stdout)
@@ -328,6 +358,7 @@ def configure_logging(prefix='[%(name)s]', level=logging.DEBUG, info_color=None)
         f'{prefix}  %(message)s',
         info_color=info_color
     ))
+    handler.addFilter(MineRLFilter()) #Hide error spam
     logging.root.setLevel(level)
     logging.root.handlers = [handler]
     for logname in ['urllib3', 'requests', 'mlflow', 'git', 'azure', 'PIL', 'numba', 'google.auth']:
