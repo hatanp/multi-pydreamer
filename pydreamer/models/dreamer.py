@@ -4,6 +4,7 @@ import torch
 import torch.distributions as D
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from ..tools import *
 from .a2c import *
@@ -394,3 +395,59 @@ class WorldModel(nn.Module):
                 tensors.update(**tensors_pred)  # image_pred, ...
 
         return loss, features, states, out_state, metrics, tensors
+
+class WrappedDreamer(nn.Module):
+    """
+    Wraps the Dreamer for DDP that needs a forward method. 
+    """
+    def __init__(self, dreamer: Dreamer):
+        super().__init__()
+        self.model = dreamer
+    def forward(self,
+                      obs: Dict[str, Tensor],
+                      in_state: Any,
+                      iwae_samples: Optional[int] = None,
+                      imag_horizon: Optional[int] = None,
+                      do_open_loop=False,
+                      do_image_pred=False,
+                      do_dream_tensors=False,
+                      ):
+        return self.model.training_step(obs,in_state,iwae_samples,imag_horizon,do_open_loop,do_image_pred,do_dream_tensors)
+
+class DDPDreamer:
+    """
+    A class for Distributed Data Parallel training. Wraps a dreamer model for DDP synchronization
+    """
+    def __init__(self, dreamer: Dreamer, device_ids=None):
+        self.model = dreamer
+        self.wrapped_model = WrappedDreamer(dreamer)
+        self.ddp_model = DDP(self.wrapped_model, device_ids=device_ids)
+    def init_optimizers(self, lr, lr_actor=None, lr_critic=None, eps=1e-5):
+        return self.model.init_optimizers(lr, lr_actor, lr_critic, eps)
+    def init_state(self,batch_size: int):
+        return self.model.init_state(batch_size)
+    def training_step(self,
+                      obs: Dict[str, Tensor],
+                      in_state: Any,
+                      iwae_samples: Optional[int] = None,
+                      imag_horizon: Optional[int] = None,
+                      do_open_loop=False,
+                      do_image_pred=False,
+                      do_dream_tensors=False,
+                      ):
+        return self.ddp_model(obs,in_state,iwae_samples,imag_horizon,do_open_loop,do_image_pred,do_dream_tensors)
+        #return self.model.training_step(obs,in_state,iwae_samples,imag_horizon,do_open_loop,do_image_pred,do_dream_tensors)
+    def inference(self,
+                  obs: Dict[str, Tensor],
+                  in_state: Any, metrics_mean=True
+                  ):
+        return self.model.inference(obs, in_state)
+    def grad_clip(self, grad_clip, grad_clip_ac=None):
+        return self.model.grad_clip(grad_clip,grad_clip_ac)
+    def __str__(self):
+        return self.model.__str__()
+    def __repr__(self):
+        return self.model.__repr__()
+    def dream(self,in_state: StateB, imag_horizon: int, dynamics_gradients=False):
+        return self.model.dream(in_state, imag_horizon, dynamics_gradients)
+

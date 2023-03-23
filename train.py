@@ -13,11 +13,11 @@ from torch.cuda.amp import GradScaler, autocast
 from torch.profiler import ProfilerActivity
 from torch.utils.data import DataLoader
 import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
 
 from pydreamer import tools
 from pydreamer.data import DataSequential, MlflowEpisodeRepository
 from pydreamer.models import *
+from pydreamer.models.dreamer import *
 from pydreamer.models.functions import map_structure, nanmean
 from pydreamer.preprocessing import Preprocessor, WorkerInfoPreprocess
 from pydreamer.tools import *
@@ -106,8 +106,7 @@ def run(conf, worker_id):
     # MODEL
 
     if conf.model == 'dreamer':
-        model = Dreamer(conf)
-        model = DDP(model, device_ids=[worker_id])
+        model = Dreamer(conf).to(f"cuda:{worker_id}")
     else:
         model: Dreamer = WorldModelProbe(conf)  # type: ignore
     #model.to(device)
@@ -117,6 +116,9 @@ def run(conf, worker_id):
 
     optimizers = model.init_optimizers(conf.adam_lr, conf.adam_lr_actor, conf.adam_lr_critic, conf.adam_eps)
     resume_step = tools.mlflow_load_checkpoint(model, optimizers)
+    #Wrap the model for DDP only after loading the checkpoint so that all the APIs work
+    if(world_size > 1):
+        model  = DDPDreamer(model, device_ids=[worker_id])
     if resume_step:
         info(f'Loaded model from checkpoint epoch {resume_step}')
 
@@ -264,8 +266,11 @@ def run(conf, worker_id):
 
                     # Save model
 
-                    if steps % conf.save_interval == 0:
-                        tools.mlflow_save_checkpoint(model, optimizers, steps)
+                    if steps % conf.save_interval == 0 and worker_id == 0:
+                        if isinstance(model, DDPDreamer):
+                            tools.mlflow_save_checkpoint(model.model, optimizers, steps)
+                        else:
+                            tools.mlflow_save_checkpoint(model, optimizers, steps)
                         info(f'Saved model checkpoint {steps}')
 
                     # Stop
