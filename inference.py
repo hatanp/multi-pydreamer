@@ -27,7 +27,7 @@ from pydreamer.tools import *
 def main(env_id='MiniGrid-MazeS11N-v0',
          worker_id=99,
          policy_main='remote_network',
-         model_reload_interval=120,
+         model_reload_interval=300,
          model_conf=dict(),
          q_main=None,
          q_clients=None,

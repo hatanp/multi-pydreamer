@@ -222,14 +222,14 @@ def run(conf, worker_id):
 
                     # Log sample
 
-                    if will_log_batch:
+                    if will_log_batch and worker_id == 0:
                         log_batch_npz(batch, tensors, f'{steps:07}.npz', subdir='d2_wm_closed')
-                    if dream_tensors:
+                    if dream_tensors and worker_id == 0:
                         log_batch_npz(batch, dream_tensors, f'{steps:07}.npz', subdir='d2_wm_dream')
 
                     # Log data buffer size
 
-                    if online_data and steps % conf.logbatch_interval == 0:
+                    if online_data and steps % conf.logbatch_interval == 0 and worker_id == 0:
                         data_train_stats = DataSequential(MlflowEpisodeRepository(input_dirs), conf.batch_length, conf.batch_size)
                         metrics['data_steps'].append(data_train_stats.stats_steps)
                         metrics['data_env_steps'].append(data_train_stats.stats_steps * conf.env_action_repeat)
@@ -282,7 +282,7 @@ def run(conf, worker_id):
                 # Evaluate
 
                 with timer('eval'):
-                    if conf.eval_interval and steps % conf.eval_interval == 0:
+                    if conf.eval_interval and steps % conf.eval_interval == 0 and worker_id == 0:
                         try:
                             # Test = same settings as train
                             data_test = DataSequential(MlflowEpisodeRepository(test_dirs), conf.batch_length, conf.test_batch_size, skip_first=False, reset_interval=conf.reset_interval)

@@ -19,7 +19,8 @@ class MultiEncoder(nn.Module):
 
         if conf.image_encoder == 'cnn':
             self.encoder_image = ConvEncoder(in_channels=encoder_channels,
-                                             cnn_depth=conf.cnn_depth)
+                                             cnn_depth=conf.cnn_depth,
+                                             layer_norm=conf.layer_norm)
         elif conf.image_encoder == 'dense':
             self.encoder_image = DenseEncoder(in_dim=conf.image_size * conf.image_size * encoder_channels,
                                               out_dim=256,
@@ -71,12 +72,39 @@ class MultiEncoder(nn.Module):
 
 class ConvEncoder(nn.Module):
 
-    def __init__(self, in_channels=3, cnn_depth=32, activation=nn.ELU):
+    def __init__(self, in_channels=3, cnn_depth=32, layer_norm=True, mlp_layers=3, activation=nn.ELU):
         super().__init__()
-        self.out_dim = cnn_depth * 32
         kernels = (4, 4, 4, 4)
         stride = 2
         d = cnn_depth
+
+        self.out_dim = d * 32
+        conv_out_dim = d * 32
+
+        hidden_dim = d * 32 * 2
+        layers = []
+        norm = nn.LayerNorm if layer_norm else NoNorm
+
+        if mlp_layers == 1:
+            layers += [
+                nn.Linear(conv_out_dim, self.out_dim),
+                norm(self.out_dim, eps=1e-3),
+                activation()]
+        if mlp_layers > 1:
+            layers += [
+                nn.Linear(conv_out_dim, hidden_dim),
+                norm(hidden_dim, eps=1e-3),
+                activation()]
+            for _ in range(mlp_layers - 2):
+                layers += [
+                    nn.Linear(hidden_dim, hidden_dim),
+                    norm(hidden_dim, eps=1e-3),
+                    activation()]
+            layers += [
+                nn.Linear(hidden_dim, self.out_dim),
+                norm(self.out_dim, eps=1e-3),
+                activation()]
+
         self.model = nn.Sequential(
             nn.Conv2d(in_channels, d, kernels[0], stride),
             activation(),
@@ -86,8 +114,8 @@ class ConvEncoder(nn.Module):
             activation(),
             nn.Conv2d(d * 4, d * 8, kernels[3], stride),
             activation(),
-            nn.Flatten()
-        )
+            nn.Flatten(),
+            *layers)
 
     def forward(self, x):
         x, bd = flatten_batch(x, 3)
