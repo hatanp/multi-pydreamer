@@ -3,6 +3,7 @@ from collections import defaultdict
 from datetime import datetime
 from logging import critical, debug, error, info, warning
 from typing import Iterator, Optional
+import os
 
 import mlflow
 import numpy as np
@@ -25,15 +26,22 @@ from pydreamer.tools import *
 
 def run(conf, worker_id):
     
-    configure_logging(prefix=f'[TRAIN {worker_id}]')
     mlrun = mlflow_init()
     artifact_uri = mlrun.info.artifact_uri
-    world_size = conf.learner_workers
-    dist.init_process_group(backend="nccl", rank=worker_id, world_size=world_size)
+    rank = worker_id
+    nodeid = 0
+    if(conf.learner_workers > 1):
+        nnodes = int(os.environ["SLURM_JOB_NUM_NODES"])
+        nodeid = int(os.environ["SLURM_NODEID"])
+        nlearners = conf.learner_workers
+        world_size = nlearners*nnodes
+        rank = nodeid*nlearners + worker_id
+        dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
 
-    torch.distributions.Distribution.set_default_validate_args(False)
-    torch.backends.cudnn.benchmark = True  # type: ignore
+        torch.distributions.Distribution.set_default_validate_args(False)
+        torch.backends.cudnn.benchmark = True  # type: ignore
     device = torch.device(f"cuda:{worker_id}")
+    configure_logging(prefix=f'[TRAIN {nodeid} {worker_id}]')
     
     # Data directories
 
@@ -68,11 +76,12 @@ def run(conf, worker_id):
     if online_data:
         while True:
             data_train_stats = DataSequential(MlflowEpisodeRepository(input_dirs), conf.batch_length, conf.batch_size, check_nonempty=False)
-            mlflow_log_metrics({
-                'train/data_steps': data_train_stats.stats_steps,
-                'train/data_env_steps': data_train_stats.stats_steps * conf.env_action_repeat,
-                '_timestamp': datetime.now().timestamp(),
-            }, step=0)
+            if worker_id == 0:
+                mlflow_log_metrics({
+                    'train/data_steps': data_train_stats.stats_steps,
+                    'train/data_env_steps': data_train_stats.stats_steps * conf.env_action_repeat,
+                    '_timestamp': datetime.now().timestamp(),
+                }, step=0)
             if data_train_stats.stats_steps < conf.generator_prefill_steps:
                 debug(f'Waiting for prefill: {data_train_stats.stats_steps}/{conf.generator_prefill_steps} steps...')
                 time.sleep(10)
@@ -105,8 +114,12 @@ def run(conf, worker_id):
 
     # MODEL
 
+    info(f'Finished setting up data and preprocessing')
+
     if conf.model == 'dreamer':
-        model = Dreamer(conf).to(f"cuda:{worker_id}")
+        device = torch.device(f"cuda:{worker_id}")
+        model = Dreamer(conf, device=device)
+        info(f'Model created on GPU {worker_id}')
     else:
         model: Dreamer = WorldModelProbe(conf)  # type: ignore
     #model.to(device)
@@ -117,8 +130,9 @@ def run(conf, worker_id):
     optimizers = model.init_optimizers(conf.adam_lr, conf.adam_lr_actor, conf.adam_lr_critic, conf.adam_eps)
     resume_step = tools.mlflow_load_checkpoint(model, optimizers)
     #Wrap the model for DDP only after loading the checkpoint so that all the APIs work
-    if(world_size > 1):
+    if(conf.learner_workers > 1):
         model  = DDPDreamer(model, device_ids=[worker_id])
+        info(f'DDP Model created on GPU {worker_id}')
     if resume_step:
         info(f'Loaded model from checkpoint epoch {resume_step}')
 
@@ -259,7 +273,7 @@ def run(conf, worker_id):
                              f"  policy_entropy: {metrics.get('train/policy_entropy',0):.3f}"
                              f"  fps: {metrics['train/fps']:.3f}"
                              )
-                        if steps > conf.log_interval:  # Skip the first batch, because the losses are very high and mess up y axis
+                        if steps > conf.log_interval and worker_id == 0:  # Skip the first batch, because the losses are very high and mess up y axis
                             mlflow_log_metrics(metrics, step=steps)
                         metrics = defaultdict(list)
                         metrics_max = defaultdict(list)

@@ -4,7 +4,7 @@ import os
 import time
 from logging import info
 from distutils.util import strtobool
-from multiprocessing import Process, Queue, Manager
+from multiprocessing import Process, Queue, Manager, get_context
 from typing import List
 
 import generator
@@ -44,17 +44,36 @@ def launch():
     # Mlflow
 
     worker_type, worker_index = get_worker_info()
-    is_main_worker = worker_type is None or worker_type == 'learner'
+    is_main_worker = worker_type is None or worker_type == 'learner'#No idea what this is for when implementing multi-node for DDP.
+    mlrun = None
+    #Can be modified somehow to use just single run in DDP...
+    """if(conf.learner_workers > 1):#Ignore is_main_worker here as no idea what it is for
+        nodeid = int(os.environ["SLURM_NODEID"])
+        if nodeid != 0:
+            time.sleep(10)
+            while True:
+                try:
+                    mlrun = mlflow_init(wait_for_resume=True)
+                    break
+                except:
+                    info('secondary launch mlflow run not found, waiting...')
+                    time.sleep(10)
+        else:
+            mlrun = mlflow_init(wait_for_resume=False)
+    else:"""
     mlrun = mlflow_init(wait_for_resume=not is_main_worker)
     artifact_uri = mlrun.info.artifact_uri
     mlflow_log_params(vars(conf))
 
     subprocesses: List[Process] = []
     # Launch policy inference thread
+
     manager = Manager()
     q_main = None
+    policy_main = "network"
     if conf.policy_inference == "remote":
         q_main = manager.Queue()
+        policy_main = "remote_network"
     q_clients = []
 
     # Launch train+eval generators
@@ -75,7 +94,7 @@ def launch():
                 num_steps=conf.n_env_steps // conf.env_action_repeat // conf.generator_workers,
                 limit_step_ratio=conf.limit_step_ratio / conf.generator_workers,
                 worker_id=i,
-                policy_main='remote_network',
+                policy_main=policy_main,
                 policy_prefill=conf.generator_prefill_policy,
                 num_steps_prefill=conf.generator_prefill_steps // conf.generator_workers,
                 split_fraction=0.05,
@@ -101,7 +120,7 @@ def launch():
                 num_steps=conf.n_env_steps // conf.env_action_repeat // conf.generator_workers,
                 limit_step_ratio=conf.limit_step_ratio / conf.generator_workers,
                 worker_id=i,
-                policy_main='remote_network',
+                policy_main=policy_main,
                 policy_prefill=conf.generator_prefill_policy,
                 num_steps_prefill=conf.generator_prefill_steps // conf.generator_workers,
                 q_main=q_main,
@@ -124,7 +143,7 @@ def launch():
                 conf,
                 f'{artifact_uri}/episodes_eval/{i}',
                 worker_id=conf.generator_workers + i,
-                policy_main='remote_network',
+                policy_main=policy_main,
                 metrics_prefix='agent_eval',
                 q_main=q_main,
                 q_self=q_self,
@@ -133,17 +152,18 @@ def launch():
 
     # Launch inference process
 
-    if conf.policy_inference == "remote":
-        info(f'Launching remote inference {q_main}')
-        p = launch_inference(
-            conf.env_id,
-            conf,
-            worker_id=0,
-            policy_main='remote_network',
-            q_main=q_main,
-            q_clients=q_clients,
-        )
-        subprocesses.append(p)
+    for i in range(conf.inference_workers):
+        if conf.policy_inference == "remote":
+            info(f'Launching remote inference {i} {q_main}')
+            p = launch_inference(
+                conf.env_id,
+                conf,
+                worker_id=i,
+                policy_main=policy_main,
+                q_main=q_main,
+                q_clients=q_clients,
+            )
+            subprocesses.append(p)
 
     # Launch learner
 
@@ -164,7 +184,7 @@ def launch():
             time.sleep(1)
     finally:
         for p in subprocesses:
-            p.kill()  # Non-daemon processes (learner) need to be killed
+            p.kill()  # Non-daemon processes (learner, inference) need to be killed
 
 
 def launch_learner(conf, worker_id):
@@ -179,8 +199,10 @@ def launch_inference(env_id,
                      q_main=None,
                      q_clients=None,
                      ):
-    p = Process(target=inference.main,
-                daemon=True,
+    
+    context = get_context("spawn")
+    p = context.Process(target=inference.main,
+                daemon=False,
                 kwargs=dict(
                     env_id=env_id,
                     policy_main=policy_main,

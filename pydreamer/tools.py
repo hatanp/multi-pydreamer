@@ -188,7 +188,8 @@ def mlflow_load_checkpoint(model, optimizers=tuple(), artifact_path='checkpoints
                 raise e
             return None
         try:
-            checkpoint = torch.load(path, map_location=map_location)
+            checkpoint = torch.load(path, map_location=lambda storage, loc: storage.cuda(map_location.index) if storage.device.type=="cuda" and map_location.type=="cuda" else storage)#Map cuda tensors onto the desired cuda device and keep others on cpu. Just mapping all to cuda caused issues with large saves.
+            #checkpoint = torch.load(path, map_location={'cuda:0': f'cuda:{map_location.index}'})
         except:
             exception('Error reading checkpoint')
             return None

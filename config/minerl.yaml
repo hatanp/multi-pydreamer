@@ -1,45 +1,49 @@
 minerl:
   env_id: MineRLObtainDiamond-v0
-  env_time_limit: 1000
+  env_time_limit: 18000
   action_dim: 38
-  generator_workers: 16
-
-  learner_workers: 3
-
-  eval_interval: 2000
-  gamma: 0.995
-  adam_lr: 1.0e-4
-  reset_interval: 50
-  clip_rewards: log1p
-  vecobs_weight: 10.0
-  reward_weight: 10.0
-  stoch_dim: 96
-  kl_weight: 0.3
-  entropy: 0.010
-  imag_horizon: 5
-  # fast mode
-  batch_length: 32
-  batch_size: 16
-  log_interval: 100
-  logbatch_interval: 2000
-  save_interval: 100
-  eval_interval: 2000
-
-  generator_prefill_steps: 1_000
-
+  #Good: 10 2 2 2 batched
+  generator_workers: 12
+  inference_workers: 1 #number of processess
+  inference_batch_size: 4 #For batched inference
+  inference_data_workers: 1 #For multiprocess inference
+  inference_type: multiproc #single/multiproc/batched
+  learner_workers: 7
+  data_workers: 2
   policy_inference: remote
 
+  gamma: 0.995
+  adam_lr: 5.0e-6
+  adam_lr_actor: 5.0e-6
+  adam_lr_critic: 5.0e-6
+  reset_interval: 150
+  clip_rewards: log1p
+  vecobs_weight: 10.0
+  reward_weight: 50.0
+  kl_weight: 0.3
+  entropy: 0.010
+  imag_horizon: 10
+  # fast mode
+  batch_length: 64
+  batch_size: 8
+  log_interval: 100
+  logbatch_interval: 1000
+  save_interval: 500
+  eval_interval: 1000
+
+  generator_prefill_steps: 3_000
+
   model: dreamer
-  deter_dim: 2048
+  deter_dim: 8192
   stoch_dim: 32
-  stoch_discrete: 32
-  hidden_dim: 1000
-  gru_layers: 1
+  stoch_discrete: 64
+  hidden_dim: 32768
+  gru_layers: 16
   gru_type: gru
   layer_norm: True
   vecobs_size: 0
   image_encoder: cnn
-  cnn_depth: 48
+  cnn_depth: 192
   image_encoder_layers: 0
   image_decoder: cnn
   image_decoder_layers: 0

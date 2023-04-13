@@ -19,7 +19,7 @@ from .probes import *
 
 class Dreamer(nn.Module):
 
-    def __init__(self, conf):
+    def __init__(self, conf, device="cpu"):
         super().__init__()
         assert conf.action_dim > 0, "Need to set action_dim to match environment"
         features_dim = conf.deter_dim + conf.stoch_dim * (conf.stoch_discrete or 1)
@@ -28,7 +28,7 @@ class Dreamer(nn.Module):
 
         # World model
 
-        self.wm = WorldModel(conf)
+        self.wm = WorldModel(conf).to(device)
 
         # Actor critic
 
@@ -41,7 +41,7 @@ class Dreamer(nn.Module):
                               target_interval=conf.target_interval,
                               actor_grad=conf.actor_grad,
                               actor_dist=conf.actor_dist,
-                              )
+                              ).to(device)
 
         # Map probe
 
@@ -55,7 +55,7 @@ class Dreamer(nn.Module):
             probe_model = NoProbeHead()
         else:
             raise NotImplementedError(f'Unknown probe_model={conf.probe_model}')
-        self.probe_model = probe_model
+        self.probe_model = probe_model.to(device)
         self.probe_gradients = conf.probe_gradients
 
     def init_optimizers(self, lr, lr_actor=None, lr_critic=None, eps=1e-5):
