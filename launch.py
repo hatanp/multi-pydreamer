@@ -47,20 +47,14 @@ def launch():
     is_main_worker = worker_type is None or worker_type == 'learner'#No idea what this is for when implementing multi-node for DDP.
     mlrun = None
     #Can be modified somehow to use just single run in DDP...
-    """if(conf.learner_workers > 1):#Ignore is_main_worker here as no idea what it is for
+    nodeid = 0
+    nnodes = 1
+    generator_log_all = True
+    if(conf.learner_workers > 1):
+        generator_log_all = False
         nodeid = int(os.environ["SLURM_NODEID"])
-        if nodeid != 0:
-            time.sleep(10)
-            while True:
-                try:
-                    mlrun = mlflow_init(wait_for_resume=True)
-                    break
-                except:
-                    info('secondary launch mlflow run not found, waiting...')
-                    time.sleep(10)
-        else:
-            mlrun = mlflow_init(wait_for_resume=False)
-    else:"""
+        nnodes = int(os.environ["SLURM_JOB_NUM_NODES"])
+    
     mlrun = mlflow_init(wait_for_resume=not is_main_worker)
     artifact_uri = mlrun.info.artifact_uri
     mlflow_log_params(vars(conf))
@@ -77,6 +71,7 @@ def launch():
     q_clients = []
 
     # Launch train+eval generators
+    print(f"DEBUGG: {conf.generator_prefill_steps} {conf.generator_prefill_steps // (conf.generator_workers * nnodes)} {conf.generator_workers} {nnodes}")
 
     for i in range(conf.generator_workers):
         q_self = None
@@ -85,19 +80,22 @@ def launch():
             q_clients.append(q_self)
             info(f'generator {i} queue {q_self}')
         if belongs_to_worker('generator', i):
-            info(f'Launching train+eval generator {i}')
+            index = i+nodeid*conf.generator_workers
+            info(f'Launching train+eval generator {index}')
             p = launch_generator(
                 conf.env_id,
                 conf,
-                save_uri=f'{artifact_uri}/episodes/{i}',
-                save_uri2=f'{artifact_uri}/episodes_eval/{i}',
+                save_uri=f'{artifact_uri}/episodes/{index}',
+                save_uri2=f'{artifact_uri}/episodes_eval/{index}',
                 num_steps=conf.n_env_steps // conf.env_action_repeat // conf.generator_workers,
                 limit_step_ratio=conf.limit_step_ratio / conf.generator_workers,
-                worker_id=i,
+                worker_id=index,
+                local_rank=i,
                 policy_main=policy_main,
                 policy_prefill=conf.generator_prefill_policy,
-                num_steps_prefill=conf.generator_prefill_steps // conf.generator_workers,
+                num_steps_prefill=conf.generator_prefill_steps // (conf.generator_workers * nnodes),
                 split_fraction=0.05,
+                log_mlflow_metrics=(generator_log_all or index<conf.generator_workers),
                 q_main=q_main,
                 q_self=q_self,
             )
@@ -112,17 +110,20 @@ def launch():
             q_clients.append(q_self)
             info(f'generator {i} queue {q_self}')
         if belongs_to_worker('generator_train', i):
-            info(f'Launching train generator {i}')
+            index = i+nodeid*conf.generator_workers_train
+            info(f'Launching train generator {index}')
             p = launch_generator(
                 conf.env_id,
                 conf,
-                f'{artifact_uri}/episodes/{i}',
+                f'{artifact_uri}/episodes/{index}',
                 num_steps=conf.n_env_steps // conf.env_action_repeat // conf.generator_workers,
                 limit_step_ratio=conf.limit_step_ratio / conf.generator_workers,
-                worker_id=i,
+                worker_id=index,
+                local_rank=i,
                 policy_main=policy_main,
                 policy_prefill=conf.generator_prefill_policy,
-                num_steps_prefill=conf.generator_prefill_steps // conf.generator_workers,
+                num_steps_prefill=conf.generator_prefill_steps // (conf.generator_workers*nnodes),
+                log_mlflow_metrics=(generator_log_all or index<conf.generator_workers),
                 q_main=q_main,
                 q_self=q_self,
             )
@@ -137,14 +138,17 @@ def launch():
             q_clients.append(q_self)
             info(f'generator {i} queue {q_self}')
         if belongs_to_worker('generator_eval', i):
-            info(f'Launching eval generator {i}')
+            index = i+nodeid*conf.generator_workers_eval
+            info(f'Launching eval generator {index}')
             p = launch_generator(
                 conf.env_id_eval or conf.env_id,
                 conf,
-                f'{artifact_uri}/episodes_eval/{i}',
-                worker_id=conf.generator_workers + i,
+                f'{artifact_uri}/episodes_eval/{index}',
+                worker_id=conf.generator_workers + index,
+                local_rank=conf.generator_workers + i,
                 policy_main=policy_main,
                 metrics_prefix='agent_eval',
+                log_mlflow_metrics=(generator_log_all or index<conf.generator_workers),
                 q_main=q_main,
                 q_self=q_self,
             )
@@ -221,6 +225,7 @@ def launch_generator(env_id,
                      policy_main='network',
                      policy_prefill='random',
                      worker_id=0,
+                     local_rank=0,
                      num_steps=int(1e9),
                      num_steps_prefill=0,
                      limit_step_ratio=0,
@@ -245,6 +250,7 @@ def launch_generator(env_id,
                     num_steps=num_steps,
                     num_steps_prefill=num_steps_prefill,
                     worker_id=worker_id,
+                    local_rank=local_rank,
                     model_conf=conf,
                     log_mlflow_metrics=log_mlflow_metrics,
                     split_fraction=split_fraction,

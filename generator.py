@@ -28,6 +28,7 @@ def main(env_id='MiniGrid-MazeS11N-v0',
          save_uri=None,
          save_uri2=None,
          worker_id=0,
+         local_rank=0,
          policy_main='random',
          policy_prefill='random',
          num_steps=int(1e6),
@@ -73,18 +74,18 @@ def main(env_id='MiniGrid-MazeS11N-v0',
 
     # Env
 
-    env = create_env(env_id, env_no_terminal, env_time_limit, env_action_repeat, worker_id)
+    env = create_env(env_id, env_no_terminal, env_time_limit, env_action_repeat, local_rank)
 
     # Policy
 
     if num_steps_prefill:
         # Start with prefill policy
         info(f'Prefill policy: {policy_prefill}')
-        policy = create_policy(policy_prefill, env, model_conf,worker_id, q_main=q_main, q_self=q_self)
+        policy = create_policy(policy_prefill, env, model_conf,local_rank, q_main=q_main, q_self=q_self)
         is_prefill_policy = True
     else:
         info(f'Policy: {policy_main}')
-        policy = create_policy(policy_main, env, model_conf,worker_id, q_main=q_main, q_self=q_self)
+        policy = create_policy(policy_main, env, model_conf,local_rank, q_main=q_main, q_self=q_self)
         is_prefill_policy = False
 
     # RUN
@@ -101,7 +102,7 @@ def main(env_id='MiniGrid-MazeS11N-v0',
         # Switch policy prefill => main
         if is_prefill_policy and steps_saved >= num_steps_prefill:
             info(f'Switching to main policy: {policy_main}')
-            policy = create_policy(policy_main, env, model_conf,worker_id, q_main=q_main, q_self=q_self)
+            policy = create_policy(policy_main, env, model_conf,local_rank, q_main=q_main, q_self=q_self)
             is_prefill_policy = False
 
         # Load network
@@ -263,11 +264,11 @@ def main(env_id='MiniGrid-MazeS11N-v0',
     info('Generator done.')
 
 
-def create_policy(policy_type: str, env, model_conf, worker_id, q_main = None, q_self = None):
+def create_policy(policy_type: str, env, model_conf, local_rank, q_main = None, q_self = None):
     if policy_type == 'remote_network':
         conf = model_conf
         info(f'creating policy {q_main, q_self}')
-        model = RemoteDreamer(conf, q_main, q_self, worker_id)
+        model = RemoteDreamer(conf, q_main, q_self, my_id=local_rank)
         preprocess = Preprocessor(image_categorical=conf.image_channels if conf.image_categorical else None,
                                   image_key=conf.image_key,
                                   map_categorical=conf.map_channels if conf.map_categorical else None,

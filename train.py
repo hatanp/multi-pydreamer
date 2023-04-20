@@ -30,6 +30,7 @@ def run(conf, worker_id):
     artifact_uri = mlrun.info.artifact_uri
     rank = worker_id
     nodeid = 0
+    nnodes = 1
     if(conf.learner_workers > 1):
         nnodes = int(os.environ["SLURM_JOB_NUM_NODES"])
         nodeid = int(os.environ["SLURM_NODEID"])
@@ -52,7 +53,7 @@ def run(conf, worker_id):
         online_data = True
         input_dirs = [
             f'{artifact_uri}/episodes/{i}'
-            for i in range(max(conf.generator_workers_train, conf.generator_workers))
+            for i in range(max(conf.generator_workers_train*nnodes, conf.generator_workers*nnodes))
         ]
     
     if conf.offline_prefill_dir:
@@ -63,7 +64,7 @@ def run(conf, worker_id):
     else:
         eval_dirs = [
             f'{artifact_uri}/episodes_eval/{i}'
-            for i in range(max(conf.generator_workers_eval, conf.generator_workers))
+            for i in range(max(conf.generator_workers_eval*nnodes, conf.generator_workers*nnodes))
         ]
 
     if conf.offline_test_dir:
@@ -76,7 +77,7 @@ def run(conf, worker_id):
     if online_data:
         while True:
             data_train_stats = DataSequential(MlflowEpisodeRepository(input_dirs), conf.batch_length, conf.batch_size, check_nonempty=False)
-            if worker_id == 0:
+            if rank == 0:
                 mlflow_log_metrics({
                     'train/data_steps': data_train_stats.stats_steps,
                     'train/data_env_steps': data_train_stats.stats_steps * conf.env_action_repeat,
@@ -125,7 +126,8 @@ def run(conf, worker_id):
     #model.to(device)
     print(model)
     # print(repr(model))
-    mlflow_log_text(repr(model), 'architecture.txt')
+    if rank != 0:
+        mlflow_log_text(repr(model), 'architecture.txt')
 
     optimizers = model.init_optimizers(conf.adam_lr, conf.adam_lr_actor, conf.adam_lr_critic, conf.adam_eps)
     resume_step = tools.mlflow_load_checkpoint(model, optimizers)
@@ -236,14 +238,14 @@ def run(conf, worker_id):
 
                     # Log sample
 
-                    if will_log_batch and worker_id == 0:
+                    if will_log_batch and rank == 0:
                         log_batch_npz(batch, tensors, f'{steps:07}.npz', subdir='d2_wm_closed')
-                    if dream_tensors and worker_id == 0:
+                    if dream_tensors and rank == 0:
                         log_batch_npz(batch, dream_tensors, f'{steps:07}.npz', subdir='d2_wm_dream')
 
                     # Log data buffer size
 
-                    if online_data and steps % conf.logbatch_interval == 0 and worker_id == 0:
+                    if online_data and steps % conf.logbatch_interval == 0 and rank == 0:
                         data_train_stats = DataSequential(MlflowEpisodeRepository(input_dirs), conf.batch_length, conf.batch_size)
                         metrics['data_steps'].append(data_train_stats.stats_steps)
                         metrics['data_env_steps'].append(data_train_stats.stats_steps * conf.env_action_repeat)
@@ -253,7 +255,7 @@ def run(conf, worker_id):
 
                     # Log metrics
 
-                    if steps % conf.log_interval == 0:
+                    if steps % conf.log_interval == 0 and rank == 0:
                         metrics = {f'train/{k}': np.array(v).mean() for k, v in metrics.items()}
                         metrics.update({f'train/{k}_max': np.array(v).max() for k, v in metrics_max.items()})
                         metrics['train/steps'] = steps
@@ -273,14 +275,14 @@ def run(conf, worker_id):
                              f"  policy_entropy: {metrics.get('train/policy_entropy',0):.3f}"
                              f"  fps: {metrics['train/fps']:.3f}"
                              )
-                        if steps > conf.log_interval and worker_id == 0:  # Skip the first batch, because the losses are very high and mess up y axis
+                        if steps > conf.log_interval and rank == 0:  # Skip the first batch, because the losses are very high and mess up y axis
                             mlflow_log_metrics(metrics, step=steps)
                         metrics = defaultdict(list)
                         metrics_max = defaultdict(list)
 
                     # Save model
 
-                    if steps % conf.save_interval == 0 and worker_id == 0:
+                    if steps % conf.save_interval == 0 and rank == 0:
                         if isinstance(model, DDPDreamer):
                             tools.mlflow_save_checkpoint(model.model, optimizers, steps)
                         else:
@@ -296,7 +298,7 @@ def run(conf, worker_id):
                 # Evaluate
 
                 with timer('eval'):
-                    if conf.eval_interval and steps % conf.eval_interval == 0 and worker_id == 0:
+                    if conf.eval_interval and steps % conf.eval_interval == 0 and rank == 0:
                         try:
                             # Test = same settings as train
                             data_test = DataSequential(MlflowEpisodeRepository(test_dirs), conf.batch_length, conf.test_batch_size, skip_first=False, reset_interval=conf.reset_interval)
